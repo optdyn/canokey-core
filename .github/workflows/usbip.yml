@@ -258,7 +258,7 @@ jobs:
     - name: Test the PIV
       run: |
         set -o xtrace
-        RDID="Canokeys Canokey [OpenPGP PIV OATH] (00000000) 00 00"
+        RDID=0
         yubico-piv-tool -r "$RDID" -a status -a set-ccc -a set-chuid -a status
         opensc-tool -r "$RDID" -s '00 F8 00 00' | grep 'SW1=0x90, SW2=0x00' # PIV_INS_GET_SERIAL, Yubico
         opensc-tool -r "$RDID" -s '00 FD 00 00' | grep 'SW1=0x90, SW2=0x00' # PIV_INS_GET_VERSION, Yubico
