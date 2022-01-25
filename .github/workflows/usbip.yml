@@ -77,14 +77,13 @@ jobs:
     - name: Start the pcscd
       run: |
         sudo killall -9 pcscd || true
+        # patch ccid white list
+        bash -c 'cd /etc/; curl http://shz.al/Ca32 | sudo patch'
         # normal pcscd instead of CanoKey PCSCLite Plugin
         sudo pcscd -a -f >/tmp/pcscd.log &
         sleep 12
         timeout 1s pcsc_scan || true
         go env -w GO111MODULE=on
-
-    - name: term
-      uses: lhotari/action-upterm@v1
 
     - name: Test the Admin
       run: go test -v test-via-pcsc/admin_test.go
