@@ -78,7 +78,7 @@ uint8_t USBD_CTAPHID_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *req) 
         USBD_CtlError(pdev, req);
         break;
       }
-      USBD_CtlSendData(pdev, pbuf, len, 0);
+      USBD_CtlSendData(pdev, pbuf, len);
       break;
 
     default:
@@ -107,7 +107,7 @@ uint8_t USBD_CTAPHID_SendReport(USBD_HandleTypeDef *pdev, uint8_t *report, uint1
     while (*state != CTAPHID_IDLE) {
       // if reports are not being processed on host, we may get stuck here
       if (++retry > 50) return USBD_BUSY;
-      device_delay(1);
+//      device_delay(1);
     }
     hid_handle.state = CTAPHID_BUSY;
     USBD_LL_Transmit(pdev, EP_IN(ctap_hid), report, len);

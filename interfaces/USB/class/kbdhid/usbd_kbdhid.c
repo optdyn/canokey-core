@@ -96,7 +96,7 @@ uint8_t USBD_KBDHID_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *req) {
         USBD_CtlError(pdev, req);
         break;
       }
-      USBD_CtlSendData(pdev, pbuf, len, 0);
+      USBD_CtlSendData(pdev, pbuf, len);
       break;
 
     default:

@@ -45,7 +45,7 @@ uint8_t USBD_WEBUSB_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *req) {
   case WEBUSB_REQ_RESP:
     if (state == STATE_SENDING_RESP) {
       uint16_t len = MIN(apdu_buffer_size, req->wLength);
-      USBD_CtlSendData(pdev, global_buffer, len, WEBUSB_EP0_SENDER);
+      USBD_CtlSendData(pdev, global_buffer, len);
       state = STATE_SENT_RESP;
     } else {
       USBD_CtlError(pdev, req);
@@ -54,7 +54,7 @@ uint8_t USBD_WEBUSB_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *req) {
     break;
 
   case WEBUSB_REQ_STAT:
-    USBD_CtlSendData(pdev, &state, 1, WEBUSB_EP0_SENDER);
+    USBD_CtlSendData(pdev, &state, 1);
     break;
 
   default:
