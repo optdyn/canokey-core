@@ -4,8 +4,8 @@
 #include <ccid.h>
 #include <ctaphid.h>
 #include <device.h>
-#include <kbdhid.h>
-#include <webusb.h>
+//#include <kbdhid.h>
+//#include <webusb.h>
 
 volatile static uint8_t touch_result;
 static uint8_t has_rf;
@@ -17,12 +17,12 @@ static enum { ON, OFF } led_status;
 void device_loop(uint8_t has_touch) {
   CCID_Loop();
   CTAPHID_Loop(0);
-  WebUSB_Loop();
-  if (has_touch &&                  // hardware features the touch pad
-      !IS_BLINKING &&               // applets are not waiting for touch
-      cfg_is_kbd_interface_enable() // keyboard emulation enabled
-  )
-    KBDHID_Loop();
+//  WebUSB_Loop();
+//  if (has_touch &&                  // hardware features the touch pad
+//      !IS_BLINKING &&               // applets are not waiting for touch
+//      cfg_is_kbd_interface_enable() // keyboard emulation enabled
+//  )
+//    KBDHID_Loop();
 }
 
 uint8_t get_touch_result(void) { return touch_result; }
@@ -58,10 +58,10 @@ uint8_t is_nfc(void) { return has_rf; }
 
 static void toggle_led(void) {
   if (led_status == ON) {
-    led_off();
+//    led_off();
     led_status = OFF;
   } else {
-    led_on();
+//    led_on();
     led_status = ON;
   }
 }
@@ -90,10 +90,10 @@ void start_blinking(uint8_t sec) {
 void stop_blinking(void) {
   last_blink = UINT32_MAX;
   if (cfg_is_led_normally_on()) {
-    led_on();
+//    led_on();
     led_status = ON;
   } else {
-    led_off();
+//    led_off();
     led_status = OFF;
   }
 }

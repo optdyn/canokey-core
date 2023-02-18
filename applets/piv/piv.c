@@ -601,7 +601,7 @@ static int piv_put_data(const CAPDU *capdu, RAPDU *rapdu) {
   int len =
 #endif
       read_file(path, DATA + 5, 0, LC - 5);
-  DBG_MSG("length %d\n", len);
+//  DBG_MSG("length %d\n", len);
   return 0;
 }
 
