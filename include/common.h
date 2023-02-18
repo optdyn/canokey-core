@@ -10,7 +10,7 @@
 
 #define APDU_BUFFER_SIZE 1340
 
-#ifdef DEBUG_OUTPUT
+#ifdef DEBUG
 #include <crypto-util.h>
 #include <stdio.h>
 #define DBG_MSG(format, ...) printf("[DBG] %s(%d): " format, __func__, __LINE__, ##__VA_ARGS__)
@@ -39,9 +39,9 @@
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
-#define UNUSED(x) ((void)(x))
+//#define UNUSED(x) ((void)(x))
 #define __weak __attribute__((weak))
-#define __packed __attribute__((packed))
+//#define __packed __attribute__((packed))
 
 #define SWAP(x, y, T)                                                                                                  \
   do {                                                                                                                 \
