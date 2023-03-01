@@ -11,6 +11,7 @@ volatile static uint8_t touch_result;
 static uint8_t has_rf;
 static uint32_t last_blink = UINT32_MAX, blink_timeout, blink_interval;
 static enum { ON, OFF } led_status;
+static uint32_t last_sent;
 
 #define IS_BLINKING (last_blink != UINT32_MAX)
 
@@ -18,10 +19,11 @@ void device_loop(uint8_t has_touch) {
   CCID_Loop();
   CTAPHID_Loop(0);
 //  WebUSB_Loop();
-//  if (has_touch &&                  // hardware features the touch pad
-//      !IS_BLINKING &&               // applets are not waiting for touch
-//      cfg_is_kbd_interface_enable() // keyboard emulation enabled
-//  )
+  if (has_touch &&                  // hardware features the touch pad
+      !IS_BLINKING /*&&               // applets are not waiting for touch
+      cfg_is_kbd_interface_enable() */// keyboard emulation enabled
+  )
+	  Touch_Loop();
 //    KBDHID_Loop();
 }
 
@@ -30,6 +32,14 @@ uint8_t get_touch_result(void) { return touch_result; }
 void set_touch_result(uint8_t result) { touch_result = result; }
 
 #ifndef TEST
+
+uint8_t Touch_Loop(void) {
+  if (get_touch_result() == TOUCH_SHORT && device_get_tick() - last_sent > 1000) {
+    last_sent = device_get_tick();
+    set_touch_result(TOUCH_NO);
+  }
+  return 0;
+}
 
 uint8_t wait_for_user_presence(void) {
   uint32_t start = device_get_tick();

@@ -56,6 +56,7 @@ void fm_transmit(uint8_t *buf, uint8_t len);
 void fm_receive(uint8_t *buf, uint8_t len);
 
 // platform independent functions
+uint8_t Touch_Loop(void);
 uint8_t wait_for_user_presence(void);
 void device_loop(uint8_t has_touch);
 uint8_t is_nfc(void);
