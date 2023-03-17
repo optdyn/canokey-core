@@ -1,12 +1,13 @@
 [submodule "canokey-crypto"]
 	path = canokey-crypto
-	url = https://github.com/canokeys/canokey-crypto.git
+	url = https://github.com/optdyn/canokey-crypto.git
+	branch = revD_cable
 [submodule "littlefs"]
 	path = littlefs
-	url = https://github.com/ARMmbed/littlefs.git
+	url = https://github.com/optdyn/littlefs.git
 [submodule "tinycbor"]
 	path = tinycbor
-	url = https://github.com/intel/tinycbor.git
+	url = https://github.com/optdyn/tinycbor.git
 [submodule "test-real/shunit2"]
 	path = test-real/shunit2
 	url = https://github.com/kward/shunit2.git
