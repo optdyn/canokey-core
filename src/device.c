@@ -46,7 +46,7 @@ uint8_t wait_for_user_presence(void) {
   uint32_t start = device_get_tick();
   uint32_t last = start;
   DBG_MSG("start %u\n", start);
-  draw_button(ILI_BLUE);
+  draw_button(ILI_RED);
   set_touch_result(TOUCH_SHORT);
   while (touch_result != TOUCH_NO) {
     CCID_Loop();
