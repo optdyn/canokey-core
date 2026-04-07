@@ -1,6 +1,6 @@
 # Canokey Core
 
-[![Tests](https://github.com/canokeys/canokey-core/workflows/tests/badge.svg?branch=master)](https://github.com/canokeys/canokey-core/actions?query=branch%3Amaster)
+[![Tests](https://github.com/canokeys/canokey-core/actions/workflows/tests.yml/badge.svg?branch=master)](https://github.com/canokeys/canokey-core/actions?query=branch%3Amaster)
 [![Coverage](https://coveralls.io/repos/github/canokeys/canokey-core/badge.svg?branch=master)](https://coveralls.io/github/canokeys/canokey-core?branch=master)
 [![Apache License 2.0](https://img.shields.io/badge/license-apache2.0-blue.svg)](https://github.com/canokeys/canokey-core/blob/master/LICENSE)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fcanokeys%2Fcanokey-core.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fcanokeys%2Fcanokey-core?ref=badge_shield)
@@ -44,12 +44,25 @@ Use [Canokey-STM32](https://github.com/canokeys/canokey-stm32) as an example.
    * `void device_set_timeout(void (*callback)(void), uint16_t timeout);`
       * A hardware timer with IRQ is required
 
-  If you need NFC, you also need to implement the following functions:
+  If you need NFC, you also need to implement the following functions for FM11NC08:
   
-  * `void fm_nss_low(void);`
-  * `void fm_nss_high(void);`
-  * `void fm_transmit(uint8_t *buf, uint8_t len);`
-  * `void fm_receive(uint8_t *buf, uint8_t len);`
+  * `void fm_csn_low(void);`
+  * `void fm_csn_high(void);`
+  * `void spi_transmit(uint8_t *buf, uint8_t len);`
+  * `void spi_receive(uint8_t *buf, uint8_t len);`
+
+  or the following functions if you use FM11NT08:
+
+  * `void fm_csn_low(void);`
+  * `void fm_csn_high(void);`
+  * `void i2c_start(void);`
+  * `void i2c_stop(void);`
+  * `void scl_delay(void);`
+  * `uint8_t i2c_read_ack(void);`
+  * `void i2c_send_ack(void);`
+  * `void i2c_send_nack(void);`
+  * `bool i2c_write_byte(uint8_t data);`
+  * `uint8_t i2c_read_byte(void);`
 
 2. You should also provide a `random32` and a optional `random_buffer` function in `rand.h`.
 
@@ -62,25 +75,6 @@ Use [Canokey-STM32](https://github.com/canokeys/canokey-stm32) as an example.
 5. You should call the `device_loop` or `nfc_loop` in the main loop, and the `device_update_led` in a periodic interrupt. 
 
 6. You should call the `set_touch_result` to report touch sensing result, and `set_nfc_state` to report NFC state.
-
-## Virt Card (USB/IP)
-
-For developing and user playing, a virtual canokey is implemented based on USB/IP.
-
-Use the following commands to compile and you would find a `canokey-usbip` there.
-```
-cd build
-cmake .. -DUSBIP=ON
-```
-
-Usage:
-```
-canokey-usbip [canokey-file [port [touch]]]
-```
-
-- `canokey-file`: the file system of the virtual canokey, default value: `/tmp/canokey-file`
-- `port`: the port where usbip server listens on, default value 3240. Currently only localhost is supported. 
-- `touch`: if presents, you could use `Ctrl-C` to issue an touch. Otherwise touch is ignored by the firmware.
 
 ## Fuzz testing
 

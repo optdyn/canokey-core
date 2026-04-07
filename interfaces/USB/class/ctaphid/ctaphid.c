@@ -24,6 +24,10 @@ uint8_t CTAPHID_Init(uint8_t (*send_report)(USBD_HandleTypeDef *pdev, uint8_t *r
 }
 
 uint8_t CTAPHID_OutEvent(uint8_t *data) {
+  if (has_frame) {
+    ERR_MSG("overrun\n");
+    return 0;
+  }
   memcpy(&frame, data, sizeof(frame));
   has_frame = 1;
   return 0;
@@ -60,6 +64,7 @@ static void CTAPHID_SendResponse(uint32_t cid, uint8_t cmd, uint8_t *data, uint1
 }
 
 static void CTAPHID_SendErrorResponse(uint32_t cid, uint8_t code) {
+  DBG_MSG("error code 0x%x\n", (int)code);
   memset(&frame, 0, sizeof(frame));
   frame.cid = cid;
   frame.init.cmd = CTAPHID_ERROR;
@@ -98,7 +103,7 @@ static void CTAPHID_Execute_Msg(void) {
   RDATA = channel.data;
   DBG_MSG("C: ");
   PRINT_HEX(channel.data, channel.bcnt_total);
-  ctap_process_apdu(capdu, rapdu);
+  ctap_process_apdu_with_src(capdu, rapdu, CTAP_SRC_HID);
   channel.data[LL] = HI(SW);
   channel.data[LL + 1] = LO(SW);
   DBG_MSG("R: ");
@@ -110,30 +115,29 @@ static void CTAPHID_Execute_Cbor(void) {
   DBG_MSG("C: ");
   PRINT_HEX(channel.data, channel.bcnt_total);
   size_t len = sizeof(channel.data);
-  ctap_process_cbor(channel.data, channel.bcnt_total, channel.data, &len);
+  ctap_process_cbor_with_src(channel.data, channel.bcnt_total, channel.data, &len, CTAP_SRC_HID);
   DBG_MSG("R: ");
   PRINT_HEX(channel.data, len);
   CTAPHID_SendResponse(channel.cid, CTAPHID_CBOR, channel.data, len);
 }
 
 uint8_t CTAPHID_Loop(uint8_t wait_for_user) {
+  uint8_t ret = LOOP_SUCCESS;
   if (channel.state == CTAPHID_BUSY && device_get_tick() > channel.expire) {
-    DBG_MSG("CTAP Timeout");
+    DBG_MSG("CTAP Timeout\n");
     channel.state = CTAPHID_IDLE;
     CTAPHID_SendErrorResponse(channel.cid, ERR_MSG_TIMEOUT);
-    return LOOP_SUCCESS;
   }
 
   if (!has_frame) return LOOP_SUCCESS;
-  has_frame = 0;
 
   if (frame.cid == 0 || (frame.cid == CID_BROADCAST && frame.init.cmd != CTAPHID_INIT)) {
     CTAPHID_SendErrorResponse(frame.cid, ERR_INVALID_CID);
-    return LOOP_SUCCESS;
+    goto consume_frame;
   }
   if (channel.state == CTAPHID_BUSY && frame.cid != channel.cid) {
     CTAPHID_SendErrorResponse(frame.cid, ERR_CHANNEL_BUSY);
-    return LOOP_SUCCESS;
+    goto consume_frame;
   }
 
   channel.cid = frame.cid;
@@ -141,14 +145,16 @@ uint8_t CTAPHID_Loop(uint8_t wait_for_user) {
   if (FRAME_TYPE(frame) == TYPE_INIT) {
     // DBG_MSG("CTAP init frame, cmd=0x%x\n", (int)frame.init.cmd);
     if (!wait_for_user && channel.state == CTAPHID_BUSY && frame.init.cmd != CTAPHID_INIT) { // self abort is ok
+      DBG_MSG("wait_for_user=%d, cmd=0x%x\n", (int)wait_for_user, (int)frame.init.cmd);
       channel.state = CTAPHID_IDLE;
       CTAPHID_SendErrorResponse(channel.cid, ERR_INVALID_SEQ);
-      return LOOP_SUCCESS;
+      goto consume_frame;
     }
     channel.bcnt_total = (uint16_t)MSG_LEN(frame);
     if (channel.bcnt_total > MAX_CTAP_BUFSIZE) {
+      DBG_MSG("bcnt_total=%hu exceeds MAX_CTAP_BUFSIZE\n", channel.bcnt_total);
       CTAPHID_SendErrorResponse(frame.cid, ERR_INVALID_LEN);
-      return LOOP_SUCCESS;
+      goto consume_frame;
     }
     uint16_t copied;
     channel.bcnt_current = copied = MIN(channel.bcnt_total, ISIZE);
@@ -157,21 +163,23 @@ uint8_t CTAPHID_Loop(uint8_t wait_for_user) {
     channel.seq = 0;
     memcpy(channel.data, frame.init.data, copied);
     channel.expire = device_get_tick() + CTAPHID_TRANS_TIMEOUT;
-  } else if (FRAME_TYPE(frame) == TYPE_CONT) {
-    // DBG_MSG("CTAP cont frame, state=%d cmd=0x%x seq=%d\n", (int)channel.state, (int)channel.cmd, (int)FRAME_SEQ(frame));
-    if (channel.state == CTAPHID_IDLE) return LOOP_SUCCESS; // ignore spurious continuation packet
+  } else {
+    // DBG_MSG("CTAP cont frame, state=%d cmd=0x%x seq=%d\n", (int)channel.state, (int)channel.cmd,
+    // (int)FRAME_SEQ(frame));
+    if (channel.state == CTAPHID_IDLE) goto consume_frame; // ignore spurious continuation packet
     if (FRAME_SEQ(frame) != channel.seq++) {
+      DBG_MSG("seq=%d\n", (int)FRAME_SEQ(frame));
       channel.state = CTAPHID_IDLE;
       CTAPHID_SendErrorResponse(channel.cid, ERR_INVALID_SEQ);
-      return LOOP_SUCCESS;
+      goto consume_frame;
     }
     uint16_t copied;
     copied = MIN(channel.bcnt_total - channel.bcnt_current, CSIZE);
     memcpy(channel.data + channel.bcnt_current, frame.cont.data, copied);
     channel.bcnt_current += copied;
   }
+  has_frame = 0;
 
-  uint8_t ret = LOOP_SUCCESS;
   if (channel.bcnt_current == channel.bcnt_total) {
     channel.expire = UINT32_MAX;
     switch (channel.cmd) {
@@ -207,18 +215,32 @@ uint8_t CTAPHID_Loop(uint8_t wait_for_user) {
       else
         CTAPHID_SendResponse(channel.cid, channel.cmd, channel.data, channel.bcnt_total);
       break;
+    case CTAPHID_WINK:
+      DBG_MSG("WINK\n");
+      if (!wait_for_user) ctap_wink();
+      CTAPHID_SendResponse(channel.cid, channel.cmd, channel.data, 0);
+      break;
     case CTAPHID_CANCEL:
-      DBG_MSG("CANCEL\n");
+      DBG_MSG("CANCEL when wait_for_user=%d\n", (int)wait_for_user);
+      if (wait_for_user) {
+        // A KEEPALIVE frame may still occupy the USB IN endpoint. Wait for
+        // the host to read it so the subsequent error response (sent by the
+        // caller after the call-chain unwinds) is not silently dropped by
+        // USBD_CTAPHID_SendReport's 50 ms busy-wait timeout.
+        USBD_CTAPHID_WaitIdle();
+      }
       ret = LOOP_CANCEL;
       break;
     default:
-      DBG_MSG("Invalid CMD\n");
+      DBG_MSG("Invalid CMD 0x%x\n", (int)channel.cmd);
       CTAPHID_SendErrorResponse(channel.cid, ERR_INVALID_CMD);
       break;
     }
     channel.state = CTAPHID_IDLE;
   }
 
+consume_frame:
+  has_frame = 0;
   return ret;
 }
 

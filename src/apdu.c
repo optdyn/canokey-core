@@ -2,14 +2,18 @@
 #include <admin.h>
 #include <apdu.h>
 #include <applets.h>
+#include <common.h>
 #include <ctap.h>
 #include <device.h>
-#include <meta.h>
+#if ENABLE_APPLET_NDEF
 #include <ndef.h>
+#endif
 #include <oath.h>
 #include <openpgp.h>
 #include <piv.h>
-#include <string.h>
+#if ENABLE_IFACE_KBDHID
+#include <kbdhid.h>
+#endif
 
 enum APPLET {
   APPLET_NULL,
@@ -18,22 +22,33 @@ enum APPLET {
   APPLET_OATH,
   APPLET_ADMIN,
   APPLET_OPENPGP,
+#if ENABLE_APPLET_NDEF
   APPLET_NDEF,
-  APPLET_META,
+#endif
   APPLET_ENUM_END,
 } current_applet;
+
+enum PIV_STATE {
+  PIV_STATE_GET_DATA,
+  PIV_STATE_GET_DATA_RESPONSE,
+  PIV_STATE_OTHER,
+};
 
 static const uint8_t PIV_AID[] = {0xA0, 0x00, 0x00, 0x03, 0x08};
 static const uint8_t OATH_AID[] = {0xA0, 0x00, 0x00, 0x05, 0x27, 0x21, 0x01};
 static const uint8_t ADMIN_AID[] = {0xF0, 0x00, 0x00, 0x00, 0x00};
 static const uint8_t OPENPGP_AID[] = {0xD2, 0x76, 0x00, 0x01, 0x24, 0x01};
 static const uint8_t FIDO_AID[] = {0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01};
+#if ENABLE_APPLET_NDEF
 static const uint8_t NDEF_AID[] = {0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01};
-static const uint8_t META_AID[] = {0xA0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17};
+#endif
 
 static const uint8_t *const AID[] = {
-    [APPLET_NULL] = NULL,       [APPLET_PIV] = PIV_AID,         [APPLET_FIDO] = FIDO_AID, [APPLET_OATH] = OATH_AID,
-    [APPLET_ADMIN] = ADMIN_AID, [APPLET_OPENPGP] = OPENPGP_AID, [APPLET_NDEF] = NDEF_AID, [APPLET_META] = META_AID,
+    [APPLET_NULL] = NULL,     [APPLET_PIV] = PIV_AID,     [APPLET_FIDO] = FIDO_AID,
+    [APPLET_OATH] = OATH_AID, [APPLET_ADMIN] = ADMIN_AID, [APPLET_OPENPGP] = OPENPGP_AID,
+#if ENABLE_APPLET_NDEF
+    [APPLET_NDEF] = NDEF_AID,
+#endif
 };
 
 static const uint8_t AID_Size[] = {
@@ -43,8 +58,9 @@ static const uint8_t AID_Size[] = {
     [APPLET_OATH] = sizeof(OATH_AID),
     [APPLET_ADMIN] = sizeof(ADMIN_AID),
     [APPLET_OPENPGP] = sizeof(OPENPGP_AID),
+#if ENABLE_APPLET_NDEF
     [APPLET_NDEF] = sizeof(NDEF_AID),
-    [APPLET_META] = sizeof(META_AID),
+#endif
 };
 
 static volatile uint32_t buffer_owner = BUFFER_OWNER_NONE;
@@ -145,6 +161,31 @@ int apdu_output(RAPDU_CHAINING *ex, RAPDU *sh) {
 }
 
 void process_apdu(CAPDU *capdu, RAPDU *rapdu) {
+#if ENABLE_IFACE_KBDHID
+  if (CLA == 0xFF && INS == 0xEE && P1 == 0xFF && P2 == 0xEE) {
+    // A special APDU to trigger Eject
+    KBDHID_Eject();
+    LL = 0;
+    SW = SW_NO_ERROR;
+    return;
+  }
+#endif
+  static enum PIV_STATE piv_state;
+  if (current_applet == APPLET_PIV) {
+    // Offload some APDU chaining commands of PIV applet,
+    // because the length of concatenated payloads may exceed chaining buffer size.
+    if (INS == PIV_INS_GET_DATA)
+      piv_state = PIV_STATE_GET_DATA;
+    else if ((piv_state == PIV_STATE_GET_DATA || piv_state == PIV_STATE_GET_DATA_RESPONSE) && INS == 0xC0)
+      piv_state = PIV_STATE_GET_DATA_RESPONSE;
+    else
+      piv_state = PIV_STATE_OTHER;
+    if (piv_state == PIV_STATE_GET_DATA || piv_state == PIV_STATE_GET_DATA_RESPONSE || INS == PIV_INS_PUT_DATA) {
+      LE = MIN(LE, APDU_BUFFER_SIZE); // Always clamp the Le to valid range
+      piv_process_apdu(capdu, rapdu);
+      return;
+    }
+  }
   int ret = apdu_input(&capdu_chaining, capdu);
   if (ret == APDU_CHAINING_NOT_LAST_BLOCK) {
     LL = 0;
@@ -162,12 +203,15 @@ void process_apdu(CAPDU *capdu, RAPDU *rapdu) {
       uint8_t i, end = APPLET_ENUM_END;
       for (i = APPLET_NULL + 1; i != end; ++i) {
         if (LC >= AID_Size[i] && memcmp(DATA, AID[i], AID_Size[i]) == 0) {
+#if ENABLE_APPLET_NDEF
           if (i == APPLET_NDEF && !cfg_is_ndef_enable()) {
             LL = 0;
             SW = SW_FILE_NOT_FOUND;
             DBG_MSG("NDEF is disable\n");
             return;
           }
+#endif
+          if (i == APPLET_PIV) piv_state = PIV_STATE_OTHER; // Reset `piv_state`
           if (i != current_applet) applets_poweroff();
           current_applet = i;
           DBG_MSG("applet switched to: %d\n", current_applet);
@@ -196,13 +240,21 @@ void process_apdu(CAPDU *capdu, RAPDU *rapdu) {
 #ifdef TEST
       if (CLA == 0x00 && INS == 0xEE && LC == 0x04 && memcmp(DATA, "\x12\x56\xAB\xF0", 4) == 0) {
         printf("MAGIC REBOOT command received!\r\n");
+        testmode_set_initial_ticks(0);
+        testmode_set_initial_ticks(device_get_tick());
         ctap_install(0);
         SW = 0x9000;
         LL = 0;
         break;
       }
+      if (CLA == 0x00 && INS == 0xEF) {
+        testmode_inject_error(P1, P2, LC, DATA);
+        SW = 0x9000;
+        LL = 0;
+        break;
+      }
 #endif
-      ctap_process_apdu(capdu, &rapdu_chaining.rapdu);
+      ctap_process_apdu_with_src(capdu, &rapdu_chaining.rapdu, CTAP_SRC_CCID);
       rapdu->len = LE;
       apdu_output(&rapdu_chaining, rapdu);
       break;
@@ -212,12 +264,11 @@ void process_apdu(CAPDU *capdu, RAPDU *rapdu) {
     case APPLET_ADMIN:
       admin_process_apdu(capdu, rapdu);
       break;
+#if ENABLE_APPLET_NDEF
     case APPLET_NDEF:
       ndef_process_apdu(capdu, rapdu);
       break;
-    case APPLET_META:
-      meta_process_apdu(capdu, rapdu);
-      break;
+#endif
     default:
       LL = 0;
       SW = SW_FILE_NOT_FOUND;
@@ -228,12 +279,12 @@ void process_apdu(CAPDU *capdu, RAPDU *rapdu) {
   }
 }
 
-int acquire_global_buffer(uint8_t owner) {
+int acquire_apdu_buffer(uint8_t owner) {
   device_atomic_compare_and_swap(&buffer_owner, BUFFER_OWNER_NONE, owner);
   return buffer_owner == owner ? 0 : -1;
 }
 
-int release_global_buffer(uint8_t owner) {
+int release_apdu_buffer(uint8_t owner) {
   device_atomic_compare_and_swap(&buffer_owner, owner, BUFFER_OWNER_NONE);
   return buffer_owner == BUFFER_OWNER_NONE ? 0 : -1;
 }

@@ -4,27 +4,40 @@
 #include <ccid.h>
 #include <ctaphid.h>
 #include <device.h>
+#if ENABLE_IFACE_KBDHID
 #include <kbdhid.h>
+#endif
 #include <webusb.h>
 
 volatile static uint8_t touch_result;
+#if ENABLE_NFC
 static uint8_t has_rf;
-static uint32_t last_blink = UINT32_MAX, blink_timeout, blink_interval;
+#endif
+static uint32_t last_blink, blink_timeout, blink_interval;
 static enum { ON, OFF } led_status;
 typedef enum { WAIT_NONE = 1, WAIT_CCID, WAIT_CTAPHID, WAIT_DEEP, WAIT_DEEP_TOUCHED, WAIT_DEEP_CANCEL } wait_status_t;
 volatile static wait_status_t wait_status = WAIT_NONE; // WAIT_NONE is not 0, hence inited
 
-uint8_t device_is_blinking(void) { return last_blink != UINT32_MAX; }
+uint8_t device_is_blinking(void) { return blink_timeout != 0; }
 
-void device_loop(uint8_t has_touch) {
+void device_loop(void) {
   CCID_Loop();
   CTAPHID_Loop(0);
   WebUSB_Loop();
-  if (has_touch &&                  // hardware features the touch pad
-      !device_is_blinking() &&      // applets are not waiting for touch
-      cfg_is_kbd_interface_enable() // keyboard emulation enabled
-  )
-    KBDHID_Loop();
+#if ENABLE_IFACE_KBDHID
+  KBDHID_Loop();
+#endif
+}
+
+bool device_allow_kbd_touch(void) {
+  uint32_t now = device_get_tick();
+  if (!device_is_blinking() &&   // applets are not waiting for touch
+      now > TOUCH_AFTER_PWRON && // ignore touch for some time after power-on
+      now - TOUCH_EXPIRE_TIME > last_blink && get_touch_result() != TOUCH_NO) {
+    DBG_MSG("now=%lu last_blink=%lu\n", now, last_blink);
+    return true;
+  }
+  return false;
 }
 
 uint8_t get_touch_result(void) {
@@ -37,12 +50,7 @@ uint8_t get_touch_result(void) {
 void set_touch_result(uint8_t result) { touch_result = result; }
 
 uint8_t wait_for_user_presence(uint8_t entry) {
-  start_blinking(0);
-  uint32_t start = device_get_tick();
-  uint32_t last = start;
-  DBG_MSG("start %u\n", start);
 
-  wait_status_t shallow = wait_status;
   if (wait_status == WAIT_NONE) {
     switch (entry) {
     case WAIT_ENTRY_CCID:
@@ -52,44 +60,58 @@ uint8_t wait_for_user_presence(uint8_t entry) {
       wait_status = WAIT_CTAPHID;
       break;
     }
-  } else
-    wait_status = WAIT_DEEP;
+  } else {
+    // New user presence test is denied while a test is ongoing
+    DBG_MSG("Denied\n");
+    return USER_PRESENCE_TIMEOUT;
+  }
+
+  uint32_t start = device_get_tick();
+  uint32_t last = start;
+  DBG_MSG("start %u\n", start);
   while (get_touch_result() == TOUCH_NO) {
-    if (wait_status == WAIT_DEEP_TOUCHED || wait_status == WAIT_DEEP_CANCEL) break;
-    if (wait_status == WAIT_CTAPHID) CCID_Loop();
-    if (CTAPHID_Loop(wait_status != WAIT_CCID) == LOOP_CANCEL) {
-      if (wait_status != WAIT_DEEP) {
-        stop_blinking();
-        wait_status = WAIT_NONE; // namely shallow
-      } else
-        wait_status = WAIT_DEEP_CANCEL;
+#ifdef BYPASS_USER_PRESENCE
+    break;
+#endif
+    // Keep blinking, in case other applet stops it
+    start_blinking(0);
+    // Nested CCID processing is not allowed
+    if (entry != WAIT_ENTRY_CCID) CCID_Loop();
+    if (CTAPHID_Loop(entry == WAIT_ENTRY_CTAPHID) == LOOP_CANCEL) {
+      DBG_MSG("Cancelled by host\n");
+      stop_blinking();
+      wait_status = WAIT_NONE;
       return USER_PRESENCE_CANCEL;
     }
     uint32_t now = device_get_tick();
     if (now - start >= 30000) {
       DBG_MSG("timeout at %u\n", now);
-      if (wait_status != WAIT_DEEP) stop_blinking();
-      wait_status = shallow;
+      stop_blinking();
+      wait_status = WAIT_NONE;
       return USER_PRESENCE_TIMEOUT;
     }
-    if (now - last >= 300) {
+    if (now - last >= 100) {
       last = now;
-      if (wait_status != WAIT_CCID) CTAPHID_SendKeepAlive(KEEPALIVE_STATUS_UPNEEDED);
+      if (entry == WAIT_ENTRY_CTAPHID) CTAPHID_SendKeepAlive(KEEPALIVE_STATUS_UPNEEDED);
     }
   }
+  // Consume this touch event
   set_touch_result(TOUCH_NO);
-  if (wait_status != WAIT_DEEP) stop_blinking();
-  if (wait_status == WAIT_DEEP)
-    wait_status = WAIT_DEEP_TOUCHED;
-  else if (wait_status == WAIT_DEEP_CANCEL) {
-    wait_status = WAIT_NONE;
-    return USER_PRESENCE_TIMEOUT;
-  } else
-    wait_status = WAIT_NONE;
+  stop_blinking();
+  wait_status = WAIT_NONE;
   return USER_PRESENCE_OK;
 }
 
+int send_keepalive_during_processing(uint8_t entry) {
+  if (entry == WAIT_ENTRY_CTAPHID) CTAPHID_SendKeepAlive(KEEPALIVE_STATUS_PROCESSING);
+  DBG_MSG("KEEPALIVE\n");
+  return 0;
+}
+
 __attribute__((weak)) int strong_user_presence_test(void) {
+#ifdef BYPASS_USER_PRESENCE
+  return 0;
+#endif
   for (int i = 0; i < 5; i++) {
     const uint8_t wait_sec = 2;
     start_blinking_interval(wait_sec, (i & 1) ? 200 : 50);
@@ -112,6 +134,7 @@ __attribute__((weak)) int strong_user_presence_test(void) {
   return 0;
 }
 
+#if ENABLE_NFC
 void set_nfc_state(uint8_t val) { has_rf = val; }
 
 uint8_t is_nfc(void) {
@@ -120,6 +143,7 @@ uint8_t is_nfc(void) {
 #endif
   return has_rf;
 }
+#endif
 
 static void toggle_led(void) {
   if (led_status == ON) {
@@ -133,8 +157,9 @@ static void toggle_led(void) {
 
 void device_update_led(void) {
   uint32_t now = device_get_tick();
-  if (now > blink_timeout) stop_blinking();
-  if (now >= last_blink && now - last_blink >= blink_interval) {
+  if (now > blink_timeout) {
+    stop_blinking();
+  } else if (device_is_blinking() && now >= last_blink && now - last_blink >= blink_interval) {
     last_blink = now;
     toggle_led();
   }
@@ -153,7 +178,7 @@ void start_blinking_interval(uint8_t sec, uint32_t interval) {
 }
 
 void stop_blinking(void) {
-  last_blink = UINT32_MAX;
+  blink_timeout = 0;
   if (cfg_is_led_normally_on()) {
     led_on();
     led_status = ON;
@@ -161,4 +186,10 @@ void stop_blinking(void) {
     led_off();
     led_status = OFF;
   }
+}
+
+void device_init(void) {
+  last_blink = 0;
+  stop_blinking();
+  set_touch_result(TOUCH_NO);
 }

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-#include <common.h>
 #include <ndef.h>
+
+#if ENABLE_NFC
+
+#include <common.h>
 
 #define CC_FILE "E103" // file identifier also 0xE103
 #define NDEF_FILE "NDEF"
@@ -30,9 +33,7 @@ static enum { NONE, CC, NDEF } selected;
 
 void ndef_poweroff(void) { selected = NONE; }
 
-int ndef_get_read_only(void) {
-  return CC_W == 0xFF ? 1 : 0;
-}
+int ndef_get_read_only(void) { return CC_W == 0xFF ? 1 : 0; }
 
 int ndef_toggle_read_only(const CAPDU *capdu, RAPDU *rapdu) {
   switch (P1) {
@@ -50,13 +51,14 @@ int ndef_toggle_read_only(const CAPDU *capdu, RAPDU *rapdu) {
 }
 
 int ndef_create_init_ndef() {
-  const char *init_data = "\x00\x11\xD1\x01\x0D\x55\x04""canokeys.org";
+  const char *init_data = "\x00\x11\xD1\x01\x0D\x55\x04"
+                          "canokeys.org";
   if (write_file(NDEF_FILE, init_data, 0, 19, 1) < -1) return -1;
   if (truncate_file(NDEF_FILE, NDEF_FILE_MAX_LENGTH) < -1) return -1; // Fill the file with zeros
   return 0;
 }
 
-int ndef_install(uint8_t reset) {
+int ndef_install(const uint8_t reset) {
   ndef_poweroff();
   if (reset || get_file_size(CC_FILE) != sizeof(current_cc) || get_file_size(NDEF_FILE) <= 0) {
     memcpy(current_cc, default_cc, sizeof(current_cc));
@@ -83,7 +85,7 @@ int ndef_select(const CAPDU *capdu, RAPDU *rapdu) {
 }
 
 int ndef_read_binary(const CAPDU *capdu, RAPDU *rapdu) {
-  uint16_t offset = (uint16_t)(P1 << 8) | P2;
+  const uint16_t offset = (uint16_t)(P1 << 8) | P2;
   if (offset > NDEF_FILE_MAX_LENGTH) EXCEPT(SW_WRONG_LENGTH);
   if (LE > NDEF_FILE_MAX_LENGTH) EXCEPT(SW_WRONG_LENGTH);
 
@@ -101,13 +103,12 @@ int ndef_read_binary(const CAPDU *capdu, RAPDU *rapdu) {
     break;
   case NONE:
     EXCEPT(SW_CONDITIONS_NOT_SATISFIED);
-    break;
   }
   return 0;
 }
 
 int ndef_update(const CAPDU *capdu, RAPDU *rapdu) {
-  uint16_t offset = (uint16_t)(P1 << 8) | P2;
+  const uint16_t offset = (uint16_t)(P1 << 8) | P2;
   if (offset > NDEF_FILE_MAX_LENGTH) EXCEPT(SW_WRONG_LENGTH);
   if (LC > NDEF_FILE_MAX_LENGTH) EXCEPT(SW_WRONG_LENGTH);
 
@@ -115,7 +116,6 @@ int ndef_update(const CAPDU *capdu, RAPDU *rapdu) {
   case CC:
     // do not allow change CC, only modified via admin
     EXCEPT(SW_CONDITIONS_NOT_SATISFIED);
-    break;
   case NDEF:
     if (CC_W != 0x00) EXCEPT(SW_SECURITY_STATUS_NOT_SATISFIED);
     if (offset + LC > NDEF_FILE_MAX_LENGTH) EXCEPT(SW_WRONG_LENGTH);
@@ -123,7 +123,6 @@ int ndef_update(const CAPDU *capdu, RAPDU *rapdu) {
     break;
   case NONE:
     EXCEPT(SW_CONDITIONS_NOT_SATISFIED);
-    break;
   }
   return 0;
 }
@@ -149,3 +148,5 @@ int ndef_process_apdu(const CAPDU *capdu, RAPDU *rapdu) {
   if (ret < 0) EXCEPT(SW_UNABLE_TO_PROCESS);
   return 0;
 }
+
+#endif // ENABLE_NFC

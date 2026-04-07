@@ -124,8 +124,7 @@ USBD_StatusTypeDef USBD_StdEPReq(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef 
   USBD_EndpointTypeDef *pep;
   ep_addr = LO(req->wIndex);
 
-  if ((ep_addr & 0x7F) >= USBD_EP_SIZE)
-    return USBD_FAIL;
+  if ((ep_addr & 0x7F) >= USBD_EP_SIZE) return USBD_FAIL;
 
   /* Check if it is a class request */
   if ((req->bmRequest & 0x60) == 0x20) {
@@ -534,7 +533,7 @@ void USBD_ParseSetupRequest(USBD_SetupReqTypedef *req, uint8_t *pdata) {
  * @param  req: usb request
  * @retval None
  */
-void USBD_CtlError(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *req) {
+void USBD_CtlError(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *req __attribute__((unused))) {
   USBD_LL_StallEP(pdev, 0x80);
   USBD_LL_StallEP(pdev, 0);
 }

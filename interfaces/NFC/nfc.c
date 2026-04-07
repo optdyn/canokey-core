@@ -1,7 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "nfc.h"
+
+#if ENABLE_NFC
+
 #include "apdu.h"
 #include "device.h"
+
+#if NFC_CHIP == NFC_CHIP_NA
+
+void nfc_init(void) {}
+void nfc_loop(void) {}
+void nfc_handler(void) {}
+
+#else
 
 #define WTX_PERIOD 150
 
@@ -22,18 +33,27 @@ void nfc_init(void) {
   inf_sending = 0;
   state_spinlock = 0;
   next_state = TO_RECEIVE;
+  // NFC interface uses global_buffer w/o calling acquire_apdu_buffer(), because NFC mode is exclusive with USB mode
   apdu_cmd.data = global_buffer;
   apdu_resp.data = global_buffer;
-  fm_write_reg(REG_FIFO_FLUSH, &inf_sending, 1); // writing anything to this reg will flush FIFO buffer
+  fm_write_regs(FM_REG_FIFO_FLUSH, &block_number, 1); // writing anything to this reg will flush FIFO buffer
 }
 
-static void nfc_error_handler(int code) {
+static void nfc_error_handler(int code __attribute__((unused))) {
   DBG_MSG("NFC Error %d\n", code);
   block_number = 1;
   apdu_buffer_rx_size = 0;
   apdu_buffer_tx_size = 0;
   last_sent = 0;
   inf_sending = 0;
+  state_spinlock = 0;
+  next_state = TO_RECEIVE;
+#if NFC_CHIP == NFC_CHIP_FM11NT
+  uint8_t data = 0x77; // set NFC to IDLE
+  fm_write_regs(FM_REG_RF_TXEN, &data, 1);
+  data = 0x55; // reset
+  fm_write_regs(FM_REG_RESET_SILENCE, &data, 1);
+#endif
 }
 
 static void do_nfc_send_frame(uint8_t prologue, uint8_t *data, uint8_t len) {
@@ -45,9 +65,9 @@ static void do_nfc_send_frame(uint8_t prologue, uint8_t *data, uint8_t len) {
   DBG_MSG("TX: ");
   PRINT_HEX(tx_frame_buf, len + 1);
 
-  uint8_t val = 0x55;
   fm_write_fifo(tx_frame_buf, len + 1);
-  fm_write_reg(REG_RF_TXEN, &val, 1);
+  const uint8_t val = 0x55;
+  fm_write_regs(FM_REG_RF_TXEN, &val, 1);
 }
 
 void nfc_send_frame(uint8_t prologue, uint8_t *data, uint8_t len) {
@@ -96,21 +116,21 @@ void nfc_loop(void) {
   if ((rx_frame_buf[0] & PCB_MASK) == PCB_I_BLOCK) {
     block_number ^= 1;
 
+    if (rx_frame_size < 3) {
+      nfc_error_handler(-6);
+      return;
+    }
+    const uint16_t payload_len = rx_frame_size - 3;
+    if (apdu_buffer_rx_size + payload_len > APDU_BUFFER_SIZE) {
+      nfc_error_handler(-3);
+      return;
+    }
+    memcpy(global_buffer + apdu_buffer_rx_size, rx_frame_buf + 1, payload_len);
+    apdu_buffer_rx_size += payload_len;
+
     if (rx_frame_buf[0] & PCB_I_CHAINING) {
-      memcpy(global_buffer + apdu_buffer_rx_size, rx_frame_buf + 1, rx_frame_size - 3);
-      if (apdu_buffer_rx_size + rx_frame_size - 3 > APDU_BUFFER_SIZE) {
-        nfc_error_handler(-3);
-        return;
-      }
-      apdu_buffer_rx_size += rx_frame_size - 3;
       nfc_send_frame(R_ACK | block_number, NULL, 0);
     } else {
-      memcpy(global_buffer + apdu_buffer_rx_size, rx_frame_buf + 1, rx_frame_size - 3);
-      if (apdu_buffer_rx_size + rx_frame_size - 3 > APDU_BUFFER_SIZE) {
-        nfc_error_handler(-4);
-        return;
-      }
-      apdu_buffer_rx_size += rx_frame_size - 3;
 
       CAPDU *capdu = &apdu_cmd;
       RAPDU *rapdu = &apdu_resp;
@@ -160,14 +180,18 @@ void nfc_loop(void) {
 
 void nfc_handler(void) {
   uint8_t irq[3];
-  fm_read_reg(REG_MAIN_IRQ, irq, sizeof(irq));
+  fm_read_regs(FM_REG_MAIN_IRQ, irq, sizeof(irq));
   if (!is_nfc()) {
     ERR_MSG("IRQ %02x in non-NFC mode\n", irq[0]);
     return;
   }
 
   if (irq[0] & MAIN_IRQ_RX_DONE) {
-    fm_read_reg(REG_FIFO_WORDCNT, &rx_frame_size, 1);
+    fm_read_regs(FM_REG_FIFO_WORDCNT, &rx_frame_size, 1);
+    if (rx_frame_size > 32) {
+      nfc_error_handler(-5);
+      return;
+    }
     fm_read_fifo(rx_frame_buf, rx_frame_size);
     DBG_MSG("RX: ");
     PRINT_HEX(rx_frame_buf, rx_frame_size);
@@ -179,3 +203,7 @@ void nfc_handler(void) {
     nfc_error_handler(-1);
   }
 }
+
+#endif // NFC_CHIP != NFC_CHIP_NA
+
+#endif // ENABLE_NFC
